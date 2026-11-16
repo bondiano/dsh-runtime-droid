@@ -1,0 +1,36 @@
+{
+  "name": "@local/dsh-runtime-droid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.13",
+    "dsh": ">=0.2.2-rc.3"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check index.js && node --check lib/adapter.js && node --check lib/rpc.js && node --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bondiano/dsh-runtime-droid.git"
+  },
+  "homepage": "https://github.com/bondiano/dsh-runtime-droid#readme",
+  "bugs": {
+    "url": "https://github.com/bondiano/dsh-runtime-droid/issues"
+  }
+}

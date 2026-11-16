@@ -1,0 +1,3 @@
+- insert:
+    - id: runtime-droid
+      name: '@local/dsh-runtime-droid'
