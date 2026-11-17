@@ -122,3 +122,28 @@ test('resume reopens a failed cached transport', async () => {
   assert.equal(processes[1].requests[0].method, 'droid.load_session')
   await adapter.dispose()
 })
+
+test('catalog lists enabled Droid models from a temporary session and closes the transport', async () => {
+  const requests = []
+  let closed = 0
+  const rpc = {
+    close() { closed++ },
+    async request(method) {
+      requests.push(method)
+      if (method === 'droid.initialize_session') return { sessionId: 'catalog-session' }
+      if (method === 'droid.list_models') return { models: [
+        { modelId: 'auto', displayName: 'Auto Model' },
+        { modelId: 'claude-fable-5.2', displayName: 'Fable 5.2' },
+        { modelId: 'retired', displayName: 'Retired', disabled: true },
+      ] }
+      return {}
+    },
+  }
+  const adapter = createDroidRuntime({ rpcFactory: () => rpc })
+  assert.deepEqual(await adapter.catalog({ cwd: '/tmp' }), { models: [
+    { id: 'auto', name: 'Auto Model' },
+    { id: 'claude-fable-5.2', name: 'Fable 5.2' },
+  ] })
+  assert.deepEqual(requests, ['droid.initialize_session', 'droid.list_models'])
+  assert.equal(closed, 1)
+})

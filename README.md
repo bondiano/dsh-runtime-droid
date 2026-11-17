@@ -29,3 +29,9 @@ notification, not an invented session aggregate or subscription quota.
 
 Run `npm test` for hermetic protocol/lifecycle fixtures. Live authenticated
 inference and billable Mission execution are separate smoke checks.
+
+## Model catalog
+
+`catalog({cwd})` opens one temporary JSON-RPC session, reads `droid.list_models`,
+closes the transport in `finally`, and sends no inference. The role-team
+settings picker uses it for Factory model ids.
