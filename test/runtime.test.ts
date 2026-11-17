@@ -2,20 +2,24 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
+import type { spawn } from 'node:child_process'
 import { DroidRpc } from '../lib/rpc.js'
 import { createDroidRuntime } from '../lib/adapter.js'
 
+/** Spawn double: the transport only touches the three pipes and kill. */
+const spawnDouble = (child: EventEmitter) => (() => child) as unknown as typeof spawn
+/** RPC double: only the transport members a case exercises are implemented. */
+const rpcDouble = (value: object): DroidRpc => value as unknown as DroidRpc
+
 function processFixture() {
-  const child = new EventEmitter()
-  Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill() {} })
-  return child
+  return Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill() {} })
 }
 test('RPC correlates interleaved replies and split UTF8 lines; rejects failures', async () => {
   const child = processFixture()
-  const rpc = new DroidRpc({ spawnProcess: () => child, timeoutMs: 500 })
-  const sent = []
+  const rpc = new DroidRpc({ spawnProcess: spawnDouble(child), timeoutMs: 500 })
+  const sent: { id?: string; factoryApiVersion?: string }[] = []
   child.stdin.on('data', chunk => sent.push(JSON.parse(chunk)))
-  const notifications = []
+  const notifications: { method?: string }[] = []
   rpc.subscribe(frame => notifications.push(frame))
   const first = rpc.request('first'), second = rpc.request('second')
   const reply = JSON.stringify({ id: sent[1].id, result: 'ok' }) + '\n'
@@ -25,11 +29,11 @@ test('RPC correlates interleaved replies and split UTF8 lines; rejects failures'
   assert.equal(await second, 'ok')
   await assert.rejects(first, /denied/)
   assert.equal(notifications.length, 1)
-  assert.equal(sent[0].factoryApiVersion, '1.0.0')
+  assert.equal(sent[0]?.factoryApiVersion, '1.0.0')
   rpc.close()
 })
 test('protocol corruption rejects pending requests and bounded stderr', async () => {
-  const child = processFixture(), rpc = new DroidRpc({ spawnProcess: () => child })
+  const child = processFixture(), rpc = new DroidRpc({ spawnProcess: spawnDouble(child) })
   const request = rpc.request('test')
   child.stderr.write('x'.repeat(12_000))
   child.stdout.write('invalid\n')
@@ -37,14 +41,16 @@ test('protocol corruption rejects pending requests and bounded stderr', async ()
   assert.equal(rpc.stderr.length, 8192)
 })
 function fakeRpc() {
-  const listeners = new Set(), requests = [], replies = []
+  const listeners = new Set<(frame: unknown) => void>()
+  const requests: { method: string; params: Record<string, unknown> }[] = []
+  const replies: { id: string; result: unknown }[] = []
   return {
     requests, replies, close() {},
-    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },
-    emit(frame) { for (const fn of listeners) fn(frame) },
-    reply(id, result) { replies.push({ id, result }) },
+    subscribe(fn: (frame: unknown) => void) { listeners.add(fn); return () => listeners.delete(fn) },
+    emit(frame: unknown) { for (const fn of listeners) fn(frame) },
+    reply(id: string, result: unknown) { replies.push({ id, result }) },
     write() {},
-    async request(method, params) {
+    async request(method: string, params: Record<string, unknown>) {
       requests.push({ method, params })
       if (method.endsWith('initialize_session')) return { sessionId: 's1' }
       if (method.endsWith('load_session')) return { sessionId: params.sessionId }
@@ -58,12 +64,12 @@ function fakeRpc() {
   }
 }
 test('initialize sends settings via RPC and read-only tool allowlist survives load', async () => {
-  const rpc = fakeRpc(), adapter = createDroidRuntime({ rpcFactory: () => rpc })
+  const rpc = fakeRpc(), adapter = createDroidRuntime({ rpcFactory: () => rpcDouble(rpc) })
   await adapter.create({ cwd: '/tmp', mode: 'review', model: 'account-model', onlyTools: ['Read'] })
   assert.equal(rpc.requests[0].params.modelId, 'account-model')
   assert.equal(rpc.requests[0].params.autonomyLevel, 'off')
-  assert.deepEqual(rpc.requests.at(-1).params.disabledToolIds, ['edit-file'])
-  const result = []
+  assert.deepEqual(rpc.requests.at(-1)?.params.disabledToolIds, ['edit-file'])
+  const result: { type: string; text?: string }[] = []
   for await (const event of adapter.send('s1', 'review', { runId: 'r1' })) result.push(event)
   assert.equal(result[0].text, 'hello')
   assert.equal(result[1].type, 'completed')
@@ -71,7 +77,7 @@ test('initialize sends settings via RPC and read-only tool allowlist survives lo
 })
 test('mission cannot start without runtime-service confirmation', async () => {
   let spawns = 0
-  const adapter = createDroidRuntime({ rpcFactory() { spawns++; return fakeRpc() } })
+  const adapter = createDroidRuntime({ rpcFactory() { spawns++; return rpcDouble(fakeRpc()) } })
   await assert.rejects(adapter.create({ mode: 'mission' }), /confirmation/)
   assert.equal(spawns, 0)
 })
@@ -85,17 +91,17 @@ test('spec boundary returns plan without approving implementation', async () => 
     }
     return original(method, params)
   }
-  const adapter = createDroidRuntime({ rpcFactory: () => rpc })
+  const adapter = createDroidRuntime({ rpcFactory: () => rpcDouble(rpc) })
   await adapter.create({ mode: 'spec', cwd: '/tmp' })
-  const result = []
+  const result: { type: string }[] = []
   for await (const event of adapter.send('s1', 'plan', { runId: 'r', policy: 'allow' })) result.push(event)
   assert.equal(result[0].type, 'artifact')
-  assert.equal(result.at(-1).type, 'completed')
+  assert.equal(result.at(-1)?.type, 'completed')
   assert.deepEqual(rpc.replies, [{ id: 'approval', result: { selectedOption: 'cancel' } }])
   await adapter.dispose()
 })
 test('resume is idempotent and cancellation targets the active run', async () => {
-  const rpc = fakeRpc(), adapter = createDroidRuntime({ rpcFactory: () => rpc })
+  const rpc = fakeRpc(), adapter = createDroidRuntime({ rpcFactory: () => rpcDouble(rpc) })
   await adapter.create({ cwd: '/tmp' })
   await adapter.resume('s1', { cwd: '/tmp' })
   assert.equal(rpc.requests.length, 1)
@@ -104,17 +110,17 @@ test('resume is idempotent and cancellation targets the active run', async () =>
   await adapter.dispose()
 })
 test('model updates preserve spec read-only autonomy and reject tool policy widening', async () => {
-  const rpc = fakeRpc(), adapter = createDroidRuntime({ rpcFactory: () => rpc })
+  const rpc = fakeRpc(), adapter = createDroidRuntime({ rpcFactory: () => rpcDouble(rpc) })
   await adapter.create({ mode: 'spec', cwd: '/tmp' })
   await adapter.updateSettings('s1', { model: 'other' })
-  assert.equal(rpc.requests.at(-1).params.interactionMode, 'spec')
-  assert.equal(rpc.requests.at(-1).params.autonomyLevel, 'off')
+  assert.equal(rpc.requests.at(-1)?.params.interactionMode, 'spec')
+  assert.equal(rpc.requests.at(-1)?.params.autonomyLevel, 'off')
   await assert.rejects(adapter.updateSettings('s1', { onlyTools: ['Edit'] }), /fixed at creation/)
   await adapter.dispose()
 })
 test('resume reopens a failed cached transport', async () => {
-  const processes = []
-  const adapter = createDroidRuntime({ rpcFactory() { const rpc = fakeRpc(); processes.push(rpc); return rpc } })
+  const processes: { error?: Error; requests: { method: string; params: Record<string, unknown> }[] }[] = []
+  const adapter = createDroidRuntime({ rpcFactory() { const rpc = fakeRpc(); processes.push(rpc); return rpcDouble(rpc) } })
   await adapter.create({ cwd: '/tmp' })
   processes[0].error = new Error('Droid exited')
   await adapter.resume('s1', { cwd: '/tmp' })
@@ -124,7 +130,7 @@ test('resume reopens a failed cached transport', async () => {
 })
 
 test('catalog lists enabled Droid models from a temporary session and closes the transport', async () => {
-  const requests = []
+  const requests: string[] = []
   let closed = 0
   const rpc = {
     close() { closed++ },
@@ -139,7 +145,7 @@ test('catalog lists enabled Droid models from a temporary session and closes the
       return {}
     },
   }
-  const adapter = createDroidRuntime({ rpcFactory: () => rpc })
+  const adapter = createDroidRuntime({ rpcFactory: () => rpcDouble(rpc) })
   assert.deepEqual(await adapter.catalog({ cwd: '/tmp' }), { models: [
     { id: 'auto', name: 'Auto Model' },
     { id: 'claude-fable-5.2', name: 'Fable 5.2' },

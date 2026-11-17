@@ -4,11 +4,16 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.js"
+    ".": {
+      "types": "./index.ts",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
-    "index.js",
-    "lib",
+    "dist/**/*.js",
+    "!dist/test/",
+    "index.ts",
+    "lib/**/*.ts",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -22,8 +27,10 @@
     }
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "check": "node --check index.js && node --check lib/adapter.js && node --check lib/rpc.js && node --test test/*.test.js"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "check": "npm run typecheck && npm test"
   },
   "repository": {
     "type": "git",
@@ -32,5 +39,12 @@
   "homepage": "https://github.com/bondiano/dsh-runtime-droid#readme",
   "bugs": {
     "url": "https://github.com/bondiano/dsh-runtime-droid/issues"
+  },
+  "dependencies": {
+    "xstate": "5.33.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.6",
+    "typescript": "7.0.2"
   }
 }
