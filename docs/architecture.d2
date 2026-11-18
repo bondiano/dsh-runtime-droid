@@ -1,0 +1,14 @@
+direction: down
+
+apply: "runtime-droid apply\n[TypeScript, cordis]"
+adapter: "createDroidRuntime\n[adapter id droid]"
+machine: "run.machine\n[xstate 5.33]"
+registry: "agentRuntime registry\n[DSH inject]"
+rpc: "DroidRpc\n[NDJSON, jsonrpc 2.0]"
+cli: "ex_droid_cli\n[spawned process]"
+
+apply -> adapter: creates adapter
+adapter -> registry: register droid
+adapter -> machine: run state
+adapter -> rpc: request subscribe
+rpc -> cli: spawn droid exec
